@@ -1,0 +1,25 @@
+{
+  "name": "migrate-outline-to-notion",
+  "version": "1.0.0",
+  "description": "Migration tool to migrate from Outline to Notion",
+  "main": "index.js",
+  "scripts": {
+    "migrate": "node --env-file=.env -r ts-node/register src/bin/migrate.ts",
+    "try": "node --env-file=.env -r ts-node/register src/bin/try.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/incubateur-territoires/migrate-outline-to-notion.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/incubateur-territoires/migrate-outline-to-notion/issues"
+  },
+  "homepage": "https://github.com/incubateur-territoires/migrate-outline-to-notion#readme",
+  "dependencies": {
+    "@notionhq/client": "^2.2.14",
+    "@tryfabric/martian": "^1.2.4",
+    "ts-node": "^10.9.2"
+  }
+}
