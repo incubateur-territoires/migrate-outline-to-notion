@@ -69,6 +69,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
       ? parentPageId 
       : await createNotionFolder(directoryPath, parentPageId, []);
 
+    const createPagePromises: Promise<void>[] = [];
 
     for (const entry of entries) {
       if (processedPages >= MAX_PAGES) break;
@@ -76,9 +77,8 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
       const fullPath = path.join(directoryPath, entry.name);
       
       if (entry.isDirectory() && entry.name !== 'uploads') {
-        await processDirectory(fullPath, currentFolderPageId, 'create');
+        createPagePromises.push(processDirectory(fullPath, currentFolderPageId, 'create'));
       } else if (entry.isFile() && path.extname(entry.name) === '.md') {
-        // Skip creating pages for folder content files
         if (foldersContentFiles.includes(fullPath)) {
           console.log('Skipping folder content file:', fullPath);
           continue;
@@ -86,57 +86,69 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
 
         const title = path.basename(fullPath, '.md');
         
-        try {
-          const response = await notionClient.createEmptyPage(title, currentFolderPageId);
-          pageMap.set(fullPath, {
-            outlinePath: fullPath,
-            notionId: response.id,
-            title,
-            url: response.url
-          });
-          console.log(`Created empty page for ${fullPath}`);
-          processedPages++;
-        } catch (error) {
-          console.error(`Error creating empty page for ${fullPath}:`, error);
-        }
+        createPagePromises.push(
+          (async () => {
+            try {
+              const response = await notionClient.createEmptyPage(title, currentFolderPageId);
+              pageMap.set(fullPath, {
+                outlinePath: fullPath,
+                notionId: response.id,
+                title,
+                url: response.url
+              });
+              console.log(`Created empty page for ${fullPath}`);
+              processedPages++;
+            } catch (error) {
+              console.error(`Error creating empty page for ${fullPath}:`, error);
+            }
+          })()
+        );
       }
     }
+
+    await Promise.all(createPagePromises);
   }
   // Phase 2: Update pages with content
   else if (phase === 'update') {
-    const currentFolderPageId = pageMap.get(directoryPath)?.notionId || parentPageId;
+    const currentFolderPageId = pageMap.get(directoryPath + '.md')?.notionId || parentPageId;
 
-    // Then process regular pages
+    const updatePromises: Promise<void>[] = [];
+
     for (const entry of entries) {
       if (processedPages >= MAX_PAGES) break;
 
       const fullPath = path.join(directoryPath, entry.name);
 
       if (entry.isDirectory() && entry.name !== 'uploads') {
-        await processDirectory(fullPath, currentFolderPageId, 'update');
+        updatePromises.push(processDirectory(fullPath, currentFolderPageId, 'update'));
       } else if (entry.isFile() && path.extname(entry.name) === '.md') {
         const mapping = pageMap.get(fullPath);
         if (mapping) {
-          const content = await readFile(fullPath, 'utf8');
-          const blocks = await converter.convertMarkdownToNotionBlocks(content, fullPath);
+          updatePromises.push(
+            (async () => {
+              const content = await readFile(fullPath, 'utf8');
+              const blocks = await converter.convertMarkdownToNotionBlocks(content, fullPath);
 
-            const chunks = [];
-            for (let i = 0; i < blocks.length; i += 100) {
-              chunks.push(blocks.slice(i, i + 100));
-            }
-          
-            // Ajouter les blocs par lots de 100
-            for (let i = 0; i < chunks.length; i++) {
-              try {
-                await notionClient.appendBlocks(mapping.notionId, chunks[i]);
-                console.log(`> Appended blocks chunk ${i + 1}/${chunks.length} for ${fullPath}`);
-              } catch (error) {
-                console.error(`Error appending blocks chunk ${i + 1} for ${fullPath}:`, error);
+              const chunks = [];
+              for (let i = 0; i < blocks.length; i += 100) {
+                chunks.push(blocks.slice(i, i + 100));
               }
-            }
+            
+              for (const chunk of chunks) {
+                try {
+                  await notionClient.appendBlocks(mapping.notionId, chunk);
+                  console.log(`> Appended blocks chunk for ${fullPath}`);
+                } catch (error) {
+                  console.error(`Error appending blocks for ${fullPath}:`, error);
+                }
+              }
+            })()
+          );
         }
       }
     }
+
+    await Promise.all(updatePromises);
   }
 }
 

@@ -1,5 +1,6 @@
 import { Client } from '@notionhq/client';
 import { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+import { RateLimiter } from './utils/rateLimiter';
 
 export interface PageMapping {
   outlinePath: string;
@@ -10,50 +11,48 @@ export interface PageMapping {
 
 export class NotionClient {
   private client: Client;
+  private rateLimiter: RateLimiter;
 
   constructor(apiKey: string) {
     this.client = new Client({ auth: apiKey });
+    this.rateLimiter = new RateLimiter();
   }
 
   async createFolderPage(folderName: string, parentPageId: string, children: any[] = []): Promise<PageObjectResponse> {
-    const notionPage = {
-      parent: {
-        page_id: parentPageId
-      },
-      properties: {
-        title: {
-          title: [
-            {
-              text: {
-                content: folderName
-              }
-            }
-          ]
-        }
-      },
-      children
-    };
-
-    return await this.client.pages.create(notionPage) as PageObjectResponse;
+    return await this.rateLimiter.add(parentPageId, () => {
+      const notionPage = {
+        parent: { page_id: parentPageId },
+        properties: {
+          title: {
+            title: [{ text: { content: folderName } }]
+          }
+        },
+        children
+      };
+      return this.client.pages.create(notionPage) as Promise<PageObjectResponse>;
+    });
   }
 
   async createEmptyPage(title: string, parentPageId: string): Promise<PageObjectResponse> {
-    const notionPage = {
-      parent: { page_id: parentPageId },
-      properties: {
-        title: {
-          title: [{ text: { content: title } }]
+    return await this.rateLimiter.add(parentPageId, () => {
+      const notionPage = {
+        parent: { page_id: parentPageId },
+        properties: {
+          title: {
+            title: [{ text: { content: title } }]
+          }
         }
-      }
-    };
-
-    return await this.client.pages.create(notionPage) as PageObjectResponse;
+      };
+      return this.client.pages.create(notionPage) as Promise<PageObjectResponse>;
+    });
   }
 
   async appendBlocks(pageId: string, blocks: any[]): Promise<void> {
-    await this.client.blocks.children.append({
-      block_id: pageId,
-      children: blocks
-    });
+    await this.rateLimiter.add(pageId, () => 
+      this.client.blocks.children.append({
+        block_id: pageId,
+        children: blocks
+      })
+    );
   }
 } 
