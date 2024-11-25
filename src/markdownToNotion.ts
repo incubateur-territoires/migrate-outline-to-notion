@@ -1,6 +1,5 @@
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { Client } from '@notionhq/client';
 import { markdownToBlocks } from '@tryfabric/martian';
 
 interface PageMapping {
@@ -11,11 +10,9 @@ interface PageMapping {
 }
 
 export class MarkdownToNotionConverter {
-  private notion: Client;
   private pageMap: Map<string, PageMapping>;
 
-  constructor(notionClient: Client, pageMap: Map<string, PageMapping>) {
-    this.notion = notionClient;
+  constructor(pageMap: Map<string, PageMapping>) {
     this.pageMap = pageMap;
   }
 

@@ -1,62 +1,35 @@
-import { Client } from '@notionhq/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as util from 'util';
 import { MarkdownToNotionConverter } from '../markdownToNotion';
-import { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+import { NotionClient, PageMapping } from '../notionClient';
 
 const readdir = util.promisify(fs.readdir);
 const readFile = util.promisify(fs.readFile);
 const stat = util.promisify(fs.stat);
 
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
-
-interface PageMapping {
-  outlinePath: string;
-  notionId: string;
-  title: string;
-  url: string;
-}
+const notionClient = new NotionClient(process.env.NOTION_API_KEY || '');
 
 const pageMap = new Map<string, PageMapping>();
 
-const converter = new MarkdownToNotionConverter(notion, pageMap);
+const converter = new MarkdownToNotionConverter(pageMap);
 
 async function createNotionFolder(directoryPath: string, parentPageId: string, children: any[] = []) {
+  const folderName = path.basename(directoryPath);
 
-    const folderName = path.basename(directoryPath);
-
-    const notionPage = {
-        parent: {
-          page_id: parentPageId
-        },
-        properties: {
-          title: {
-            title: [
-              {
-                text: {
-                  content: folderName
-                }
-              }
-            ]
-          }
-        },
-        children
-      };
   try {
-    const response = await notion.pages.create(notionPage) as PageObjectResponse;
+    const response = await notionClient.createFolderPage(folderName, parentPageId, children);
 
     console.log(`Created Notion folder page for ${folderName}`);
     pageMap.set(directoryPath + '.md', {
-        outlinePath: directoryPath,
-        notionId: response.id,
-        title: folderName,
-        url: response.url
+      outlinePath: directoryPath,
+      notionId: response.id,
+      title: folderName,
+      url: response.url
     });
     return response.id;
   } catch (error) {
     console.error(`Error creating folder page for ${folderName}:`, error);
-    console.log(`Notion page:`, notionPage);
     return parentPageId;
   }
 }
@@ -113,27 +86,18 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
 
         const title = path.basename(fullPath, '.md');
         
-        const notionPage = {
-            parent: { page_id: currentFolderPageId },
-            properties: {
-                title: {
-                title: [{ text: { content: title } }]
-                }
-            }
-        };
-
         try {
-            const response = await notion.pages.create(notionPage) as PageObjectResponse;
-            pageMap.set(fullPath, {
-                outlinePath: fullPath,
-                notionId: response.id,
-                title,
-                url: response.url
-            });
-            console.log(`Created empty page for ${fullPath}`);
-            processedPages++;
+          const response = await notionClient.createEmptyPage(title, currentFolderPageId);
+          pageMap.set(fullPath, {
+            outlinePath: fullPath,
+            notionId: response.id,
+            title,
+            url: response.url
+          });
+          console.log(`Created empty page for ${fullPath}`);
+          processedPages++;
         } catch (error) {
-            console.error(`Error creating empty page for ${fullPath}:`, error);
+          console.error(`Error creating empty page for ${fullPath}:`, error);
         }
       }
     }
@@ -164,10 +128,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
             // Ajouter les blocs par lots de 100
             for (let i = 0; i < chunks.length; i++) {
               try {
-                await notion.blocks.children.append({
-                  block_id: mapping.notionId,
-                  children: chunks[i]
-                });
+                await notionClient.appendBlocks(mapping.notionId, chunks[i]);
                 console.log(`> Appended blocks chunk ${i + 1}/${chunks.length} for ${fullPath}`);
               } catch (error) {
                 console.error(`Error appending blocks chunk ${i + 1} for ${fullPath}:`, error);
