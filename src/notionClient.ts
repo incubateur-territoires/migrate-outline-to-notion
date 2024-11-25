@@ -1,5 +1,5 @@
 import { Client } from '@notionhq/client';
-import { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
+import { AppendBlockChildrenResponse, PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
 import { RateLimiter } from './utils/rateLimiter';
 
 export interface PageMapping {
@@ -47,8 +47,8 @@ export class NotionClient {
     });
   }
 
-  async appendBlocks(pageId: string, blocks: any[]): Promise<void> {
-    await this.rateLimiter.add(pageId, () => 
+  async appendBlocks(pageId: string, blocks: any[]): Promise<AppendBlockChildrenResponse> {
+    return await this.rateLimiter.add(pageId, () => 
       this.client.blocks.children.append({
         block_id: pageId,
         children: blocks
