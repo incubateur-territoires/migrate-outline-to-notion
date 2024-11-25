@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as util from 'util';
 import { MarkdownToNotionConverter } from '../markdownToNotion';
 import { NotionClient, PageMapping } from '../notionClient';
+import { processNotionContent, createNotionPage, createNotionFolder } from '../notionProcessor';
 
 const readdir = util.promisify(fs.readdir);
 const readFile = util.promisify(fs.readFile);
@@ -13,26 +14,6 @@ const notionClient = new NotionClient(process.env.NOTION_API_KEY || '');
 const pageMap = new Map<string, PageMapping>();
 
 const converter = new MarkdownToNotionConverter(pageMap);
-
-async function createNotionFolder(directoryPath: string, parentPageId: string, children: any[] = []) {
-  const folderName = path.basename(directoryPath);
-
-  try {
-    const response = await notionClient.createFolderPage(folderName, parentPageId, children);
-
-    console.log(`Created Notion folder page for ${folderName}`);
-    pageMap.set(directoryPath + '.md', {
-      outlinePath: directoryPath,
-      notionId: response.id,
-      title: folderName,
-      url: response.url
-    });
-    return response.id;
-  } catch (error) {
-    console.error(`Error creating folder page for ${folderName}:`, error);
-    return parentPageId;
-  }
-}
 
 async function processDirectory(directoryPath: string, parentPageId: string, phase: 'create' | 'update') {
   /**
@@ -67,7 +48,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
   if (phase === 'create') {
     const currentFolderPageId = currentFolderName === process.env.OUTLINE_EXPORT_PATH 
       ? parentPageId 
-      : await createNotionFolder(directoryPath, parentPageId, []);
+      : await createNotionFolder(directoryPath, parentPageId, notionClient, pageMap, []);
 
     const createPagePromises: Promise<void>[] = [];
 
@@ -87,21 +68,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
         const title = decodeURIComponent(path.basename(fullPath, '.md'));
         
         createPagePromises.push(
-          (async () => {
-            try {
-              const response = await notionClient.createEmptyPage(title, currentFolderPageId);
-              pageMap.set(fullPath, {
-                outlinePath: fullPath,
-                notionId: response.id,
-                title,
-                url: response.url
-              });
-              console.log(`Created empty page for ${fullPath}`);
-              processedPages++;
-            } catch (error) {
-              console.error(`Error creating empty page for ${fullPath}:`, error);
-            }
-          })()
+          createNotionPage(fullPath, title, currentFolderPageId, notionClient, pageMap)
         );
       }
     }
@@ -124,25 +91,9 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
       } else if (entry.isFile() && path.extname(entry.name) === '.md') {
         const mapping = pageMap.get(fullPath);
         if (mapping) {
+          const content = await readFile(fullPath, 'utf8');
           updatePromises.push(
-            (async () => {
-              const content = await readFile(fullPath, 'utf8');
-              const blocks = await converter.convertMarkdownToNotionBlocks(content, fullPath);
-
-              const chunks = [];
-              for (let i = 0; i < blocks.length; i += 100) {
-                chunks.push(blocks.slice(i, i + 100));
-              }
-            
-              for (const chunk of chunks) {
-                try {
-                  await notionClient.appendBlocks(mapping.notionId, chunk);
-                  console.log(`> Appended blocks chunk for ${fullPath}`);
-                } catch (error) {
-                  console.error(`Error appending blocks for ${fullPath}:`, error);
-                }
-              }
-            })()
+            processNotionContent(content, fullPath, mapping.notionId, notionClient, converter)
           );
         }
       }
