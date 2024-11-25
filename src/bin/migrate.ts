@@ -84,7 +84,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
           continue;
         }
 
-        const title = path.basename(fullPath, '.md');
+        const title = decodeURIComponent(path.basename(fullPath, '.md'));
         
         createPagePromises.push(
           (async () => {
