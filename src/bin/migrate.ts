@@ -1,8 +1,9 @@
-const { Client } = require("@notionhq/client")
-const fs = require('fs');
-const path = require('path');
-const util = require('util');
-const { markdownToBlocks } = require("@tryfabric/martian");
+import { Client } from '@notionhq/client';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as util from 'util';
+import { MarkdownToNotionConverter } from '../markdownToNotion';
+import { PageObjectResponse } from '@notionhq/client/build/src/api-endpoints';
 
 const readdir = util.promisify(fs.readdir);
 const readFile = util.promisify(fs.readFile);
@@ -19,167 +20,7 @@ interface PageMapping {
 
 const pageMap = new Map<string, PageMapping>();
 
-async function uploadImageToNotion(imagePath: string): Promise<string | null> {
-  try {
-    const imageBuffer = await readFile(imagePath);
-    const response = await notion.files.create({
-      file: {
-        name: path.basename(imagePath),
-        content: imageBuffer
-      },
-      parent: { workspace: true }
-    });
-    return response.url;
-  } catch (error) {
-    console.error('Error uploading image:', imagePath, error);
-    return null;
-  }
-}
-
-async function findImageInUploads(mdFilePath: string, imageName: string): Promise<string | null> {
-  const mdDir = path.dirname(mdFilePath);
-  const possiblePaths = [
-    path.join(mdDir, 'uploads', imageName),
-    path.join(mdDir, '..', 'uploads', imageName),
-    // Ajoutez d'autres chemins possibles si nécessaire
-  ];
-
-  for (const imgPath of possiblePaths) {
-    if (fs.existsSync(imgPath)) {
-      return imgPath;
-    }
-  }
-  return null;
-}
-
-const normalizeTableRowBlocks = (tableRowBlocks: any[]): any[] => {
-  if (!tableRowBlocks?.length) return [];
-  
-  const maxColumns = Math.max(...tableRowBlocks.map(block => block.table_row?.cells?.length || 0));
-  
-  if (maxColumns === 0) return [];
-  
-  return tableRowBlocks.map(block => ({
-    ...block,
-    table_row: {
-        cells: [
-        ...(block.table_row?.cells || []),
-        ...Array(maxColumns - (block.table_row?.cells?.length || 0)).fill([{
-            type: 'text',
-            text: { content: '' }
-        }])
-        ]
-    }
-  }));
-};
-
-const cleanMarkdownContent = (content: string): string => {
-  // Remove lines that only contain whitespace and backslashes
-  return content
-    .split('\n')
-    .filter(line => !/^\s*\\+\s*$/.test(line))
-    .join('\n');
-};
-
-const convertMarkdownToNotionBlocks = async (content: string, mdFilePath: string) => {
-  // Clean the content before processing
-  const cleanedContent = cleanMarkdownContent(content);
-    
-  // Prétraiter le contenu pour remplacer les liens
-  const processedContent = cleanedContent.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    (match, text, url) => {
-
-      // Pour les liens relatifs ou absolus
-      if (url.startsWith('./') || url.startsWith('/') || url.includes('outline.incubateur.anct.gouv.fr')) {
-        const normalizedPath = normalizeOutlinePath(url, mdFilePath);
-        const mappedPage = findMappedPage(normalizedPath);
-
-        if (mappedPage) {
-          return `[${text}](${mappedPage.url})`;
-        }
-      }
-
-      // Si aucune correspondance n'est trouvée, retourner le texte sans lien
-      return text;
-    }
-  );
-
-  try {
-
-    const blocks = markdownToBlocks(processedContent);
-
-    const processedBlocks = await Promise.all(blocks.map(async (block: any) => {
-      // Gérer les blocs d'image
-      if (block.type === 'image') {
-        const imagePath = block.image?.external?.url || block.image?.file?.url;
-        if (imagePath) {
-          // Supprimer les préfixes de protocole si présents
-          const cleanImagePath = imagePath.replace(/^(file:\/\/|https?:\/\/)/, '');
-          const fullImagePath = await findImageInUploads(mdFilePath, cleanImagePath);
-          
-          if (fullImagePath) {
-            const notionUrl = await uploadImageToNotion(fullImagePath);
-            if (notionUrl) {
-              return {
-                type: 'image',
-                image: {
-                  type: 'external',
-                  external: {
-                    url: notionUrl
-                  }
-                }
-              };
-            }
-          }
-        }
-      }
-      
-      // Normalisation améliorée des tables
-      if (block.type === 'table') {
-        const normalizedRows = normalizeTableRowBlocks(block.table?.children);
-        
-        // Si la table est invalide (vide ou mal formée), on la convertit en paragraphe
-        if (!normalizedRows) {
-          return {
-            type: 'paragraph',
-            paragraph: {
-              rich_text: [{
-                type: 'text',
-                text: { content: 'Table conversion failed - invalid format' }
-              }]
-            }
-          };
-        }
-
-        return {
-          ...block,
-          table: {
-            ...block.table,
-            children: normalizedRows
-          }
-        };
-      }
-      
-      return block;
-    }));
-
-    return processedBlocks;
-    
-  } catch (error: any) {
-    console.error('Error converting markdown to blocks:', error);
-    return [{
-      object: 'block',
-      type: 'paragraph',
-      paragraph: {
-        rich_text: [{
-          type: 'text',
-          text: { content: 'Error converting content: ' + error.message }
-        }]
-      }
-    }];
-  }
-};
+const converter = new MarkdownToNotionConverter(notion, pageMap);
 
 async function createNotionFolder(directoryPath: string, parentPageId: string, children: any[] = []) {
 
@@ -203,13 +44,14 @@ async function createNotionFolder(directoryPath: string, parentPageId: string, c
         children
       };
   try {
-    const response = await notion.pages.create(notionPage);
+    const response = await notion.pages.create(notionPage) as PageObjectResponse;
+
     console.log(`Created Notion folder page for ${folderName}`);
     pageMap.set(directoryPath + '.md', {
-      outlinePath: directoryPath,
-      notionId: response.id,
-      title: folderName,
-      url: response.url
+        outlinePath: directoryPath,
+        notionId: response.id,
+        title: folderName,
+        url: response.url
     });
     return response.id;
   } catch (error) {
@@ -218,32 +60,6 @@ async function createNotionFolder(directoryPath: string, parentPageId: string, c
     return parentPageId;
   }
 }
-
-const normalizeOutlinePath = (url: string, currentFile: string): string => {
-  if (url.includes('outline.incubateur.anct.gouv.fr')) {
-    const urlPath = new URL(url).pathname;
-    return path.normalize(urlPath);
-  }
-  
-  if (url.startsWith('./')) {
-    return path.normalize(path.join(path.dirname(currentFile), url));
-  }
-  
-  if (url.startsWith('/')) {
-    return path.normalize(url);
-  }
-  
-  return url;
-};
-
-const findMappedPage = (normalizedPath: string): PageMapping | undefined => {
-  for (const [outlinePath, mapping] of pageMap.entries()) {
-    if (normalizedPath.includes(encodeURIComponent(path.basename(outlinePath)))) {
-      return mapping;
-    }
-  }
-  return undefined;
-};
 
 async function processDirectory(directoryPath: string, parentPageId: string, phase: 'create' | 'update') {
   /**
@@ -307,7 +123,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
         };
 
         try {
-            const response = await notion.pages.create(notionPage);
+            const response = await notion.pages.create(notionPage) as PageObjectResponse;
             pageMap.set(fullPath, {
                 outlinePath: fullPath,
                 notionId: response.id,
@@ -338,7 +154,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
         const mapping = pageMap.get(fullPath);
         if (mapping) {
           const content = await readFile(fullPath, 'utf8');
-          const blocks = await convertMarkdownToNotionBlocks(content, fullPath);
+          const blocks = await converter.convertMarkdownToNotionBlocks(content, fullPath);
 
             const chunks = [];
             for (let i = 0; i < blocks.length; i += 100) {
