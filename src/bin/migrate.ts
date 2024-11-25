@@ -73,9 +73,20 @@ const normalizeTableRowBlocks = (tableRowBlocks: any[]): any[] => {
   }));
 };
 
+const cleanMarkdownContent = (content: string): string => {
+  // Remove lines that only contain whitespace and backslashes
+  return content
+    .split('\n')
+    .filter(line => !/^\s*\\+\s*$/.test(line))
+    .join('\n');
+};
+
 const convertMarkdownToNotionBlocks = async (content: string, mdFilePath: string) => {
+  // Clean the content before processing
+  const cleanedContent = cleanMarkdownContent(content);
+    
   // Prétraiter le contenu pour remplacer les liens
-  const processedContent = content.replace(
+  const processedContent = cleanedContent.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (match, text, url) => {
 
@@ -250,7 +261,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
    */
   const entries = await readdir(directoryPath, { withFileTypes: true });
   let processedPages = 0;
-  const MAX_PAGES = 5;
+  const MAX_PAGES = 500;
 
   // Skip processing if this is an uploads directory
   if (path.basename(directoryPath) === 'uploads') {
@@ -344,6 +355,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
                 console.log(`> Appended blocks chunk ${i + 1}/${chunks.length} for ${fullPath}`);
               } catch (error) {
                 console.error(`Error appending blocks chunk ${i + 1} for ${fullPath}:`, error);
+                console.log('> Blocks:', JSON.stringify(chunks[i], null, 2));
               }
             }
         }
