@@ -132,7 +132,6 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
                 console.log(`> Appended blocks chunk ${i + 1}/${chunks.length} for ${fullPath}`);
               } catch (error) {
                 console.error(`Error appending blocks chunk ${i + 1} for ${fullPath}:`, error);
-                console.log('> Blocks:', JSON.stringify(chunks[i], null, 2));
               }
             }
         }

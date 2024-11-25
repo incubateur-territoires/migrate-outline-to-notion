@@ -64,6 +64,7 @@ export class MarkdownToNotionConverter {
     return content
       .split('\n')
       .filter(line => !/^\s*\\+\s*$/.test(line))
+      .map(line => line.replace(/==([^=]+)==/g, '$1'))  // Simply remove the == markers
       .join('\n');
   }
 
