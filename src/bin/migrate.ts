@@ -33,15 +33,15 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
   let processedPages = 0;
   const MAX_PAGES = 500;
 
-  // Skip processing if this is an uploads directory
-  if (path.basename(directoryPath) === 'uploads') {
-    console.log('Skipping uploads directory:', directoryPath);
+  // Skip processing if this is an uploads or public directory
+  if (['uploads', 'public'].includes(path.basename(directoryPath))) {
+    console.log('Skipping directory:', directoryPath);
     return;
   }
 
   const currentFolderName = path.basename(directoryPath);
   const foldersContentFiles = entries
-    .filter((entry: { isDirectory: () => any; name: string; }) => entry.isDirectory() && entry.name !== 'uploads')
+    .filter((entry: { isDirectory: () => any; name: string; }) => entry.isDirectory() && entry.name !== 'uploads' && entry.name !== 'public')
     .map((entry: { name: string; }) => path.join(directoryPath, `${entry.name}.md`));
 
   // Phase 1: Create empty pages and store mappings
@@ -57,11 +57,11 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
 
       const fullPath = path.join(directoryPath, entry.name);
       
-      if (entry.isDirectory() && entry.name !== 'uploads') {
+      if (entry.isDirectory() && !['uploads', 'public'].includes(entry.name)) {
         createPagePromises.push(processDirectory(fullPath, currentFolderPageId, 'create'));
       } else if (entry.isFile() && path.extname(entry.name) === '.md') {
         if (foldersContentFiles.includes(fullPath)) {
-          console.log('Skipping folder content file:', fullPath);
+          console.log('> Skipping folder content file:', fullPath);
           continue;
         }
 
@@ -86,7 +86,7 @@ async function processDirectory(directoryPath: string, parentPageId: string, pha
 
       const fullPath = path.join(directoryPath, entry.name);
 
-      if (entry.isDirectory() && entry.name !== 'uploads') {
+      if (entry.isDirectory() && !['uploads', 'public'].includes(entry.name)) {
         updatePromises.push(processDirectory(fullPath, currentFolderPageId, 'update'));
       } else if (entry.isFile() && path.extname(entry.name) === '.md') {
         const mapping = pageMap.get(fullPath);

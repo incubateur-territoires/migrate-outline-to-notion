@@ -89,6 +89,7 @@ const appendBlocksInOrder = async (
           currentBatch = [];
         } catch (error) {
           console.error(`Error appending batch at level ${level} for ${fullPath}:`, error);
+          //console.log(`>> Batch content:`, JSON.stringify(currentBatch, null, 2));
         }
       }
     }
@@ -110,7 +111,7 @@ export const createNotionPage = async (
       title,
       url: response.url
     });
-    console.log(`Created empty page for ${fullPath}`);
+    console.log(`> Created empty page for ${fullPath}`);
   } catch (error) {
     console.error(`Error creating empty page for ${fullPath}:`, error);
     throw error; // Re-throw to allow caller to handle the error
@@ -129,7 +130,7 @@ export const createNotionFolder = async (
   try {
     const response = await notionClient.createFolderPage(folderName, parentPageId, children);
 
-    console.log(`Created Notion folder page for ${folderName}`);
+    console.log(`> Created Notion folder page for ${folderName}`);
     pageMap.set(directoryPath + '.md', {
       outlinePath: directoryPath,
       notionId: response.id,
