@@ -148,12 +148,12 @@ export class MarkdownToNotionConverter {
     return processedContent;
   }
 
-  private async processMarkdownContent(content: string, mdFilePath: string): Promise<string> {
+  private async processMarkdownImages(content: string, mdFilePath: string): Promise<string> {
     const mdDir = path.dirname(mdFilePath);
+    let processedContent = content;
     
     // Process images with regex, handling both title/alignment syntax
     const imageRegex = /!\[(.*?)\]\((uploads\/[^)]+?|public\/[^)]+?)(?:\s+"([^"]*)")?\)/g;
-    let processedContent = content;
     
     // Process all images asynchronously
     const matches = Array.from(content.matchAll(imageRegex));
@@ -184,7 +184,19 @@ export class MarkdownToNotionConverter {
       processedContent = processedContent.replace(fullMatch, replacement);
     }
 
-    // Process regular links after images
+    return processedContent;
+  }
+
+  private async processMarkdownContent(content: string, mdFilePath: string): Promise<string> {
+    const mdDir = path.dirname(mdFilePath);
+
+    // Process Outline files first
+    let processedContent = await this.processOutlineFiles(content, mdFilePath);
+    
+    // Then process regular images
+    processedContent = await this.processMarkdownImages(processedContent, mdFilePath);
+    
+    // Finally process regular links
     processedContent = await this.processMarkdownLinks(processedContent, mdFilePath);
 
     return processedContent;
@@ -241,6 +253,79 @@ export class MarkdownToNotionConverter {
     return processedBlocks;
   }
 
+  private cleanInvalidLinks(block: any): any {
+    const isValidUrl = (url: string): boolean => {
+      try {
+        new URL(url);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Nettoyer les rich_text récursivement
+    const cleanRichText = (obj: any) => {
+      if (Array.isArray(obj)) {
+        return obj.map(item => {
+          if (item.text?.link?.url && !isValidUrl(item.text.link.url)) {
+            console.warn(`Warning: Invalid URL found "${item.text.link.url}", removing link`);
+            return { ...item, text: { ...item.text, link: null } };
+          }
+          return item;
+        });
+      }
+      return obj;
+    };
+
+    // Nettoyer le bloc et ses enfants récursivement
+    Object.keys(block).forEach(key => {
+      if (key === 'rich_text') {
+        block[key] = cleanRichText(block[key]);
+      } else if (key === 'children' && Array.isArray(block[key])) {
+        block[key] = block[key].map(this.cleanInvalidLinks.bind(this));
+      } else if (typeof block[key] === 'object' && block[key] !== null) {
+        block[key] = this.cleanInvalidLinks(block[key]);
+      }
+    });
+
+    return block;
+  }
+
+  private async processOutlineFiles(content: string, mdFilePath: string): Promise<string> {
+    const fileRegex = /\[([^\]]+)\s+(\d+)\]\(((?:public|uploads)\/.+?\.(?:pdf|docx|zip|jpg|png))\)/gi;
+    const mdDir = path.dirname(mdFilePath);
+    let processedContent = content;
+    
+    const matches = Array.from(content.matchAll(fileRegex));
+    
+    for (const match of matches) {
+      const [fullMatch, fileName, fileSize, filePath] = match;
+      let replacement = fullMatch;
+
+      try {
+        const relativePath = filePath.match(/(?:public|uploads)\/(.+)/i)?.[1];
+        if (!relativePath) {
+          throw new Error(`Invalid file path: ${filePath}`);
+        }
+
+        const decodedPath = decodeURIComponent(relativePath);
+        const fullFilePath = path.join(mdDir, 'public', decodedPath);
+
+        const s3Url = await this.s3Uploader.uploadFile(fullFilePath);
+        if (s3Url) {
+          replacement = `[${fileName}](${s3Url})`;
+        }
+      } catch (error) {
+        console.error(`Failed to process file: ${filePath}`, error);
+      }
+
+      console.log(`>> Processing file: ${filePath} -> ${replacement}`);
+      processedContent = processedContent.replace(fullMatch, replacement);
+    }
+
+    return processedContent;
+  }
+
   public async convertMarkdownToNotionBlocks(content: string, mdFilePath: string) {
     const cleanedContent = this.cleanMarkdownContent(content, mdFilePath);
     const processedContent = await this.processMarkdownContent(cleanedContent, mdFilePath);
@@ -248,9 +333,10 @@ export class MarkdownToNotionConverter {
     try {
       const blocks = markdownToBlocks(processedContent);
       const blocksWithCallouts = this.processCalloutBlocks(blocks);
+      const cleanedBlocks = blocksWithCallouts.map(this.cleanInvalidLinks.bind(this));
       
       // Traiter les tables
-      return await Promise.all(blocksWithCallouts.map(async (block: any) => {
+      return await Promise.all(cleanedBlocks.map(async (block: any) => {
         if (block.type === 'table') {
           const normalizedRows = this.normalizeTableRowBlocks(block.table?.children);
           if (!normalizedRows) {
