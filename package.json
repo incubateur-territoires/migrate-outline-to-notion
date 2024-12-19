@@ -23,7 +23,8 @@
     "@notionhq/client": "^2.2.14",
     "@tryfabric/martian": "^1.2.4",
     "mime-types": "^2.1.35",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/mime-types": "^2.1.4"

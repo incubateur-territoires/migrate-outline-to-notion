@@ -1,6 +1,7 @@
 import path from 'path';
 import { markdownToBlocks } from '@tryfabric/martian';
 import { S3Uploader } from './s3Client';
+import logger from './utils/logger';
 
 interface PageMapping {
   outlinePath: string;
@@ -32,13 +33,13 @@ export class MarkdownToNotionConverter {
   private async uploadImageToS3(imagePath: string): Promise<string | null> {
     try {
       const s3Url = await this.s3Uploader.uploadFile(imagePath);
-      console.log(`>> Uploaded image to S3: ${s3Url}`);
+      logger.debug(`Uploaded image to S3: ${s3Url}`);
       return s3Url;
     } catch (error: any) {
       if (error.code === 'ENOENT') {
-        console.error(`File not found: ${imagePath}`);
+        logger.error(`File not found: ${imagePath}`);
       } else {
-        console.error('Error uploading image:', error);
+        logger.error('Error uploading image:', error);
       }
       return null;
     }
@@ -81,7 +82,7 @@ export class MarkdownToNotionConverter {
       .filter(line => !/^\s*(\*\s*)?\\+\s*$/.test(line))
       .map(line => {
         if (this.detectPasswordInLine(line)) {
-          console.warn(`⚠️ WARNING: Possible password detected in ${fileName}:`, line);
+          logger.warn(`Possible password detected in ${fileName}:`, { line });
         }
         line = line.replace(/^\*\*\* /, '* ** ');
         return line.replace(/==([^=]+)==/g, '$1');
@@ -134,10 +135,10 @@ export class MarkdownToNotionConverter {
         const mappedPage = this.findMappedPage(normalizedPath);
         if (mappedPage) {
           replacement = `[${text}](${mappedPage.url})`;
-          console.log(`>> Processing link: ${url} -> ${replacement}`);
+          logger.debug(`Processing link: ${url} -> ${replacement}`);
         } else {
           replacement = `${text} - ${url} - Impossible de reconstruire ce lien dans la migration vers Notion`;
-          console.log(`>> Error processing link: ${url} -> ${replacement}`);
+          logger.error(`Error processing link: ${url} -> ${replacement}`);
         }
       }
 
@@ -176,11 +177,11 @@ export class MarkdownToNotionConverter {
               : `![${altText}](${s3Url})`;
           }
         } catch (error) {
-          console.error(`Failed to process image: ${decodedImagePath}`, error);
+          logger.error(`Failed to process image: ${decodedImagePath}`, error);
         }
       }
 
-      console.log(`>> Processing image: ${decodedImagePath} -> ${replacement}`);
+      logger.debug(`Processing image: ${decodedImagePath} -> ${replacement}`);
       processedContent = processedContent.replace(fullMatch, replacement);
     }
 
@@ -190,13 +191,19 @@ export class MarkdownToNotionConverter {
   private async processMarkdownContent(content: string, mdFilePath: string): Promise<string> {
     const mdDir = path.dirname(mdFilePath);
 
-    // Process Outline files first
-    let processedContent = await this.processOutlineFiles(content, mdFilePath);
+    // Handle mention links first
+    let processedContent = content.replace(
+      /@\[(.*?)\]\(mention:\/\/[^)]+\)/g,
+      (_, name) => `**${name.trim()}**`
+    );
     
-    // Then process regular images
+    // Process Outline files
+    processedContent = await this.processOutlineFiles(processedContent, mdFilePath);
+    
+    // Process regular images
     processedContent = await this.processMarkdownImages(processedContent, mdFilePath);
     
-    // Finally process regular links
+    // Process regular links
     processedContent = await this.processMarkdownLinks(processedContent, mdFilePath);
 
     return processedContent;
@@ -268,7 +275,7 @@ export class MarkdownToNotionConverter {
       if (Array.isArray(obj)) {
         return obj.map(item => {
           if (item.text?.link?.url && !isValidUrl(item.text.link.url)) {
-            console.warn(`Warning: Invalid URL found "${item.text.link.url}", removing link`);
+            logger.warn(`Invalid URL found "${item.text.link.url}", removing link`);
             return { ...item, text: { ...item.text, link: null } };
           }
           return item;
@@ -316,10 +323,10 @@ export class MarkdownToNotionConverter {
           replacement = `[${fileName}](${s3Url})`;
         }
       } catch (error) {
-        console.error(`Failed to process file: ${filePath}`, error);
+        logger.error(`Failed to process file: ${filePath}`, error);
       }
 
-      console.log(`>> Processing file: ${filePath} -> ${replacement}`);
+      logger.debug(`Processing file: ${filePath} -> ${replacement}`);
       processedContent = processedContent.replace(fullMatch, replacement);
     }
 
@@ -361,7 +368,7 @@ export class MarkdownToNotionConverter {
         return block;
       }));
     } catch (error: any) {
-      console.error('Error converting markdown to blocks:', error);
+      logger.error('Error converting markdown to blocks:', error);
       return [{
         object: 'block',
         type: 'paragraph',

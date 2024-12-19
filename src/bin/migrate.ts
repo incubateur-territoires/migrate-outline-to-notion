@@ -4,10 +4,10 @@ import * as util from 'util';
 import { MarkdownToNotionConverter } from '../markdownToNotion';
 import { NotionClient, PageMapping } from '../notionClient';
 import { processNotionContent, createNotionPage, createNotionFolder } from '../notionProcessor';
+import logger from '../utils/logger';
 
 const readdir = util.promisify(fs.readdir);
 const readFile = util.promisify(fs.readFile);
-const stat = util.promisify(fs.stat);
 
 const notionClient = new NotionClient(process.env.NOTION_API_KEY || '');
 
@@ -15,109 +15,188 @@ const pageMap = new Map<string, PageMapping>();
 
 const converter = new MarkdownToNotionConverter(pageMap);
 
-async function processDirectory(directoryPath: string, parentPageId: string, phase: 'create' | 'update') {
-  /**
-   * Directory entries are as follows:
-   * - .md files are pages to be created
-   * - folders are to be processed recursively and a .md page with the same name as the folder exists to represent the folder page content
-   * Example:
-   * - /docs.md # page representing the content of the /docs/ folder
-   * - /docs/index.md
-   * - /docs/getting-started.md
-   * - /docs/advanced.md # page representing the content of the /docs/advanced/ folder
-   * - /docs/advanced/index.md
-   * - /docs/advanced/docs.md # sub-folders may have the same name as parent folders
-   * - /docs/advanced/docs/index.md
-   */
+const countProcessableFiles = async (directoryPath: string): Promise<number> => {
+  let count = 0;
   const entries = await readdir(directoryPath, { withFileTypes: true });
-  let processedPages = 0;
-  const MAX_PAGES = 500;
-
-  // Skip processing if this is an uploads or public directory
-  if (['uploads', 'public'].includes(path.basename(directoryPath))) {
-    console.log('Skipping directory:', directoryPath);
-    return;
+  
+  for (const entry of entries) {
+    const fullPath = path.join(directoryPath, entry.name);
+    if (['uploads', 'public'].includes(entry.name)) continue;
+    
+    if (entry.isDirectory()) {
+      count += await countProcessableFiles(fullPath);
+    } else if (entry.isFile() && path.extname(entry.name) === '.md') {
+      count++;
+    }
   }
+  
+  return count;
+};
 
-  const currentFolderName = path.basename(directoryPath);
-  const foldersContentFiles = entries
-    .filter((entry: { isDirectory: () => any; name: string; }) => entry.isDirectory() && entry.name !== 'uploads' && entry.name !== 'public')
-    .map((entry: { name: string; }) => path.join(directoryPath, `${entry.name}.md`));
+async function processDirectory(
+  directoryPath: string, 
+  parentPageId: string, 
+  phase: 'create' | 'update',
+  totalFiles: number,
+  processedSoFar: { count: number }
+) {
+  try {
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    let processedPages = 0;
 
-  // Phase 1: Create empty pages and store mappings
-  if (phase === 'create') {
-    const currentFolderPageId = currentFolderName === process.env.OUTLINE_EXPORT_PATH 
-      ? parentPageId 
-      : await createNotionFolder(directoryPath, parentPageId, notionClient, pageMap, []);
+    if (['uploads', 'public'].includes(path.basename(directoryPath))) {
+      logger.debug('Skipping directory:', { directoryPath });
+      return;
+    }
 
-    const createPagePromises: Promise<void>[] = [];
+    const currentFolderName = path.basename(directoryPath);
+    const foldersContentFiles = entries
+      .filter((entry: { isDirectory: () => any; name: string; }) => entry.isDirectory() && entry.name !== 'uploads' && entry.name !== 'public')
+      .map((entry: { name: string; }) => path.join(directoryPath, `${entry.name}.md`));
 
-    for (const entry of entries) {
-      if (processedPages >= MAX_PAGES) break;
+    if (phase === 'create') {
+      let currentFolderPageId: string;
+      try {
+        currentFolderPageId = currentFolderName === process.env.OUTLINE_EXPORT_PATH 
+          ? parentPageId 
+          : await createNotionFolder(directoryPath, parentPageId, notionClient, pageMap, []);
+      } catch (error) {
+        logger.error('Error creating folder, using parent ID as fallback:', { 
+          error,
+          directoryPath,
+          parentPageId
+        });
+        currentFolderPageId = parentPageId;
+      }
 
-      const fullPath = path.join(directoryPath, entry.name);
-      
-      if (entry.isDirectory() && !['uploads', 'public'].includes(entry.name)) {
-        createPagePromises.push(processDirectory(fullPath, currentFolderPageId, 'create'));
-      } else if (entry.isFile() && path.extname(entry.name) === '.md') {
-        if (foldersContentFiles.includes(fullPath)) {
-          console.log('> Skipping folder content file:', fullPath);
+      for (const entry of entries) {
+
+        const fullPath = path.join(directoryPath, entry.name);
+        
+        try {
+          if (entry.isDirectory() && !['uploads', 'public'].includes(entry.name)) {
+            await processDirectory(fullPath, currentFolderPageId, 'create', totalFiles, processedSoFar).catch(error => {
+              logger.error('Error processing subdirectory, continuing with next entry:', { 
+                error,
+                fullPath,
+                phase: 'create'
+              });
+            });
+          } else if (entry.isFile() && path.extname(entry.name) === '.md') {
+            if (foldersContentFiles.includes(fullPath)) {
+              logger.debug('Skipping folder content file:', { fullPath });
+              continue;
+            }
+
+            const title = decodeURIComponent(path.basename(fullPath, '.md'));
+            
+            await createNotionPage(fullPath, title, currentFolderPageId, notionClient, pageMap).catch(error => {
+              logger.error('Error creating notion page, continuing with next entry:', { 
+                error,
+                fullPath,
+                title,
+                currentFolderPageId
+              });
+            });
+            processedSoFar.count++;
+            const percentage = ((processedSoFar.count / totalFiles) * 100).toFixed(2);
+            logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles})`);
+          }
+          processedPages++;
+        } catch (error) {
+          logger.error('Error processing entry, continuing with next:', { 
+            error,
+            entry: entry.name,
+            directoryPath
+          });
           continue;
         }
-
-        const title = decodeURIComponent(path.basename(fullPath, '.md'));
-        
-        createPagePromises.push(
-          createNotionPage(fullPath, title, currentFolderPageId, notionClient, pageMap)
-        );
       }
     }
+    // Phase 2: Update pages with content
+    else if (phase === 'update') {
+      const currentFolderPageId = pageMap.get(directoryPath + '.md')?.notionId || parentPageId;
 
-    await Promise.all(createPagePromises);
-  }
-  // Phase 2: Update pages with content
-  else if (phase === 'update') {
-    const currentFolderPageId = pageMap.get(directoryPath + '.md')?.notionId || parentPageId;
+      for (const entry of entries) {
 
-    const updatePromises: Promise<void>[] = [];
+        const fullPath = path.join(directoryPath, entry.name);
 
-    for (const entry of entries) {
-      if (processedPages >= MAX_PAGES) break;
-
-      const fullPath = path.join(directoryPath, entry.name);
-
-      if (entry.isDirectory() && !['uploads', 'public'].includes(entry.name)) {
-        updatePromises.push(processDirectory(fullPath, currentFolderPageId, 'update'));
-      } else if (entry.isFile() && path.extname(entry.name) === '.md') {
-        const mapping = pageMap.get(fullPath);
-        if (mapping) {
-          const content = await readFile(fullPath, 'utf8');
-          updatePromises.push(
-            processNotionContent(content, fullPath, mapping.notionId, notionClient, converter)
-          );
+        try {
+          if (entry.isDirectory() && !['uploads', 'public'].includes(entry.name)) {
+            await processDirectory(fullPath, currentFolderPageId, 'update', totalFiles, processedSoFar).catch(error => {
+              logger.error('Error processing subdirectory in update phase, continuing:', { 
+                error,
+                fullPath,
+                phase: 'update'
+              });
+            });
+          } else if (entry.isFile() && path.extname(entry.name) === '.md') {
+            const mapping = pageMap.get(fullPath);
+            if (mapping) {
+              try {
+                const content = await readFile(fullPath, 'utf8');
+                await processNotionContent(content, fullPath, mapping.notionId, notionClient, converter).catch(error => {
+                  logger.error('Error processing notion content, continuing:', { 
+                    error,
+                    fullPath,
+                    notionId: mapping.notionId
+                  });
+                });
+                processedSoFar.count++;
+                const percentage = ((processedSoFar.count / totalFiles) * 100).toFixed(2);
+                logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles})`);
+              } catch (error) {
+                logger.error('Error reading file, continuing with next:', { 
+                  error,
+                  fullPath
+                });
+                continue;
+              }
+            }
+          }
+          processedPages++;
+        } catch (error) {
+          logger.error('Error processing entry in update phase, continuing:', { 
+            error,
+            entry: entry.name,
+            directoryPath
+          });
+          continue;
         }
       }
     }
-
-    await Promise.all(updatePromises);
+  } catch (error) {
+    logger.error('Error in processDirectory, continuing with parent process:', { 
+      error,
+      directoryPath,
+      phase
+    });
   }
 }
 
 async function main() {
-  const outlinePath = process.env.OUTLINE_EXPORT_PATH;
-  const destinationPageId = process.env.NOTION_DESTINATION_PAGE_ID;
+  try {
+    const outlinePath = process.env.OUTLINE_EXPORT_PATH;
+    const destinationPageId = process.env.NOTION_DESTINATION_PAGE_ID;
 
-  if (!outlinePath || !destinationPageId) {
-    throw new Error('Missing required environment variables: OUTLINE_EXPORT_PATH and/or NOTION_DESTINATION_PAGE_ID');
+    if (!outlinePath || !destinationPageId) {
+      logger.error('Missing required environment variables');
+      process.exit(1);
+    }
+
+    const totalFiles = await countProcessableFiles(outlinePath);
+    logger.info(`Found ${totalFiles} files to process`);
+
+    logger.info("Starting migration phase 1: Creating empty pages...");
+    await processDirectory(outlinePath, destinationPageId, 'create', totalFiles, { count: 0 });
+
+    logger.info("Starting migration phase 2: Updating content with proper links...");
+    await processDirectory(outlinePath, destinationPageId, 'update', totalFiles, { count: 0 });
+
+    logger.info("Migration completed!");
+  } catch (error) {
+    logger.error('Fatal error in migration, but process completed as much as possible:', { error });
   }
-
-  console.log("Starting migration phase 1: Creating empty pages...");
-  await processDirectory(outlinePath, destinationPageId, 'create');
-
-  console.log("Starting migration phase 2: Updating content with proper links...");
-  await processDirectory(outlinePath, destinationPageId, 'update');
-
-  console.log("Migration completed!");
 }
 
 main();

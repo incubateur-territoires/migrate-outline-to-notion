@@ -2,6 +2,7 @@ import { access } from 'fs/promises';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createReadStream } from 'fs';
 import { lookup } from 'mime-types';
+import logger from './utils/logger';
 
 export class S3Uploader {
   private s3Client: S3Client;
@@ -46,7 +47,7 @@ export class S3Uploader {
 
       return encodeURI(`https://${this.bucket}.s3.${this.region}.scw.cloud/${fileName}`);
     } catch (error) {
-      console.error('Error uploading to S3:', error);
+      logger.error('Error uploading to S3:', error);
       throw new Error(`Failed to upload image to S3: ${error}`);
     }
   }

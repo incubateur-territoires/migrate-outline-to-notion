@@ -2,6 +2,7 @@ import * as path from 'path';
 import { NotionClient } from './notionClient';
 import { MarkdownToNotionConverter } from './markdownToNotion';
 import { PageMapping } from './notionClient';
+import logger from './utils/logger';
 
 export const processNotionContent = async (
   content: string,
@@ -10,8 +11,18 @@ export const processNotionContent = async (
   notionClient: NotionClient,
   converter: MarkdownToNotionConverter
 ): Promise<void> => {
-  const blocks = await converter.convertMarkdownToNotionBlocks(content, fullPath);
-  await appendBlocksInOrder(blocks, notionId, notionClient, fullPath);
+  try {
+    logger.debug('Converting markdown to Notion blocks', { fullPath });
+    const blocks = await converter.convertMarkdownToNotionBlocks(content, fullPath);
+    await appendBlocksInOrder(blocks, notionId, notionClient, fullPath);
+  } catch (error) {
+    logger.error('Error processing Notion content', {
+      fullPath,
+      notionId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
+  }
 };
 
 const getMaxNestingLevel = (blocks: any[]): number => {
@@ -47,25 +58,28 @@ const appendBlocksInOrder = async (
     const hasChildren = block[blockType]?.children?.length > 0;
     
     if (blockType !== 'table' && hasChildren && shouldSplitChildren) {
-      // First, append any accumulated simple blocks
       if (currentBatch.length > 0) {
         try {
-          await notionClient.appendBlocks(parentId, currentBatch);
+          await notionClient.appendBlocks(parentId, currentBatch, fullPath);
           currentBatch = [];
         } catch (error) {
-          console.error(`Error appending batch at level ${level} for ${fullPath}:`, error);
+          logger.error('Error appending batch', {
+            fullPath,
+            level,
+            batchSize: currentBatch.length,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
         }
       }
 
       try {
-        // Extract children and create a copy of the block without children
         const children = block[blockType].children;
         const blockWithoutChildren = {
           ...block,
           [blockType]: { ...block[blockType], children: undefined }
         };
         
-        const response = await notionClient.appendBlocks(parentId, [blockWithoutChildren]);
+        const response = await notionClient.appendBlocks(parentId, [blockWithoutChildren], fullPath);
         const blockId = response.results[0].id;
 
         await appendBlocksInOrder(
@@ -76,20 +90,32 @@ const appendBlocksInOrder = async (
           level + 1
         );
       } catch (error) {
-        console.error(`Error appending block with children at level ${level} for ${fullPath}:`, error);
+        logger.error('Error appending block with children', {
+          fullPath,
+          level,
+          blockType,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
       }
     } else {
-      // Traiter comme un bloc simple avec ses enfants
       currentBatch.push(block);
       
       if (currentBatch.length === 100 || i === blocks.length - 1) {
         try {
-          await notionClient.appendBlocks(parentId, currentBatch);
-          console.log(`> Appended ${currentBatch.length} blocks at level ${level} for ${fullPath}`);
+          await notionClient.appendBlocks(parentId, currentBatch, fullPath);
+          logger.debug('Appended blocks batch', {
+            fullPath,
+            level,
+            batchSize: currentBatch.length
+          });
           currentBatch = [];
         } catch (error) {
-          console.error(`Error appending batch at level ${level} for ${fullPath}:`, error);
-          //console.log(`>> Batch content:`, JSON.stringify(currentBatch, null, 2));
+          logger.error('Error appending batch', {
+            fullPath,
+            level,
+            batchSize: currentBatch.length,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
         }
       }
     }
@@ -104,17 +130,32 @@ export const createNotionPage = async (
   pageMap: Map<string, PageMapping>
 ): Promise<void> => {
   try {
-    const response = await notionClient.createEmptyPage(title, currentFolderPageId);
+    logger.debug('Creating empty page', {
+      fullPath,
+      title,
+      currentFolderPageId
+    });
+
+    const response = await notionClient.createEmptyPage(title, currentFolderPageId, fullPath);
     pageMap.set(fullPath, {
       outlinePath: fullPath,
       notionId: response.id,
       title,
       url: response.url
     });
-    console.log(`> Created empty page for ${fullPath}`);
+    
+    logger.debug('Created empty page successfully', {
+      fullPath,
+      notionId: response.id
+    });
   } catch (error) {
-    console.error(`Error creating empty page for ${fullPath}:`, error);
-    throw error; // Re-throw to allow caller to handle the error
+    logger.debug('Error creating empty page', {
+      fullPath,
+      title,
+      currentFolderPageId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
   }
 };
 
@@ -126,12 +167,23 @@ export const createNotionFolder = async (
   children: any[] = []
 ): Promise<string> => {
   const folderName = path.basename(directoryPath);
+  const fullPath = directoryPath + '.md';
 
   try {
-    const response = await notionClient.createFolderPage(folderName, parentPageId, children);
+    logger.debug('Creating Notion folder page', {
+      fullPath,
+      folderName,
+      parentPageId
+    });
 
-    console.log(`> Created Notion folder page for ${folderName}`);
-    pageMap.set(directoryPath + '.md', {
+    const response = await notionClient.createFolderPage(folderName, parentPageId, fullPath, children);
+
+    logger.debug('Created Notion folder page successfully', {
+      fullPath,
+      notionId: response.id
+    });
+
+    pageMap.set(fullPath, {
       outlinePath: directoryPath,
       notionId: response.id,
       title: folderName,
@@ -139,7 +191,12 @@ export const createNotionFolder = async (
     });
     return response.id;
   } catch (error) {
-    console.error(`Error creating folder page for ${folderName}:`, error);
+    logger.error('Error creating folder page', {
+      fullPath,
+      folderName,
+      parentPageId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
     return parentPageId;
   }
 }; 
