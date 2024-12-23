@@ -45,25 +45,48 @@ export class MarkdownToNotionConverter {
     }
   }
 
-  private normalizeTableRowBlocks(tableRowBlocks: any[]): any[] {
-    if (!tableRowBlocks?.length) return [];
+  private normalizeTableRowBlocks(tableRowBlocks: any[], mdFilePath: string): {normalizedRows: any[], columnCount: number} {
+    if (!tableRowBlocks?.length) return {normalizedRows: [], columnCount: 0};
     
-    const maxColumns = Math.max(...tableRowBlocks.map(block => block.table_row?.cells?.length || 0));
+    const maxColumns = Math.min(
+      Math.max(
+        ...tableRowBlocks.map(block => block.table_row?.cells?.length || 0)
+      ),
+      100
+    );
     
-    if (maxColumns === 0) return [];
+    if (maxColumns === 0) return {normalizedRows: [], columnCount: 0};
     
-    return tableRowBlocks.map(block => ({
-      ...block,
-      table_row: {
-        cells: [
-          ...(block.table_row?.cells || []),
-          ...Array(maxColumns - (block.table_row?.cells?.length || 0)).fill([{
-            type: 'text',
-            text: { content: '' }
-          }])
-        ]
-      }
-    }));
+    if (tableRowBlocks.some(block => (block.table_row?.cells?.length || 0) > 100)) {
+      logger.warn('Table had more than 100 columns - truncating to first 100 columns', { fullPath: mdFilePath });
+    }
+    
+    const createEmptyCell = () => ({
+      type: 'text',
+      text: { content: '' }
+    });
+    
+    return {
+      columnCount: maxColumns,
+      normalizedRows: tableRowBlocks.map(block => {
+        const currentCells = block.table_row?.cells || [];
+          
+        const normalizedCells = currentCells
+          .slice(0, maxColumns)
+          .map((cell: any) => Array.isArray(cell) ? cell : [cell]);
+        
+        while (normalizedCells.length < maxColumns) {
+          normalizedCells.push([createEmptyCell()]);
+        }
+        
+        return {
+          ...block,
+          table_row: {
+            cells: normalizedCells
+          }
+        };
+      }),
+    }
   }
 
   private detectPasswordInLine(line: string): boolean {
@@ -118,9 +141,7 @@ export class MarkdownToNotionConverter {
     return undefined;
   }
 
-  private async processMarkdownLinks(content: string, mdFilePath: string): Promise<string> {
-    const mdDir = path.dirname(mdFilePath);
-    
+  private async processMarkdownLinks(content: string, mdFilePath: string): Promise<string> {    
     // Process links with regex, but handle them asynchronously
     const matches = Array.from(content.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g));
     let processedContent = content;
@@ -138,7 +159,7 @@ export class MarkdownToNotionConverter {
           logger.debug(`Processing link: ${url} -> ${replacement}`);
         } else {
           replacement = `${text} - ${url} - Impossible de reconstruire ce lien dans la migration vers Notion`;
-          logger.error(`Error processing link: ${url} -> ${replacement}`);
+          logger.warn(`Error processing link: ${fullMatch} -> ${url} -> ${replacement}`, { fullPath: mdFilePath });
         }
       }
 
@@ -153,8 +174,8 @@ export class MarkdownToNotionConverter {
     const mdDir = path.dirname(mdFilePath);
     let processedContent = content;
     
-    // Process images with regex, handling both title/alignment syntax
-    const imageRegex = /!\[(.*?)\]\((uploads\/[^)]+?|public\/[^)]+?)(?:\s+"([^"]*)")?\)/g;
+    // Updated regex to handle parentheses in filenames
+    const imageRegex = /!\[(.*?)\]\((uploads\/[^)]+?|public\/[^)"]+?)(?:\s+"([^"]*)")?\)/g;
     
     // Process all images asynchronously
     const matches = Array.from(content.matchAll(imageRegex));
@@ -345,7 +366,7 @@ export class MarkdownToNotionConverter {
       // Traiter les tables
       return await Promise.all(cleanedBlocks.map(async (block: any) => {
         if (block.type === 'table') {
-          const normalizedRows = this.normalizeTableRowBlocks(block.table?.children);
+          const {normalizedRows, columnCount} = this.normalizeTableRowBlocks(block.table?.children, mdFilePath);
           if (!normalizedRows) {
             return {
               type: 'paragraph',
@@ -361,6 +382,9 @@ export class MarkdownToNotionConverter {
             ...block,
             table: {
               ...block.table,
+              table_width: columnCount,
+              has_column_header: true,
+              has_row_header: false,
               children: normalizedRows
             }
           };
