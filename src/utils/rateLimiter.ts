@@ -1,3 +1,5 @@
+import logger from "./logger";
+
 type Task = {
   pageId: string;
   execute: () => Promise<any>;
@@ -9,6 +11,8 @@ export class RateLimiter {
   private globalQueue: Task[] = [];
   private processing = false;
   private readonly maxGlobalConcurrent = 3;
+  private readonly rateWindowMs = 1000;
+  private executionTimestamps: number[] = [];
 
   async add<T>(pageId: string, task: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -45,10 +49,19 @@ export class RateLimiter {
 
     this.processing = true;
 
-    // Find next eligible task
+    const now = Date.now();
+    this.executionTimestamps = this.executionTimestamps.filter(
+      timestamp => timestamp > now - this.rateWindowMs
+    );
+
+    if (this.executionTimestamps.length >= this.maxGlobalConcurrent) {
+      logger.info(`Rate limit reached: ${this.executionTimestamps.length} requests in last ${this.rateWindowMs}ms. Waiting...`);
+      setTimeout(() => this.processQueue(), 100);
+      return;
+    }
+
     const taskIndex = this.globalQueue.findIndex(task => 
-      !this.activeRequests.has(task.pageId) && 
-      this.activeRequests.size < this.maxGlobalConcurrent
+      !this.activeRequests.has(task.pageId)
     );
 
     if (taskIndex === -1) {
@@ -59,7 +72,6 @@ export class RateLimiter {
     const task = this.globalQueue[taskIndex];
     this.globalQueue.splice(taskIndex, 1);
     
-    // Remove from page-specific queue
     const pageQueue = this.queues.get(task.pageId)!;
     pageQueue.shift();
     if (pageQueue.length === 0) {
@@ -67,19 +79,37 @@ export class RateLimiter {
     }
 
     this.activeRequests.add(task.pageId);
+    logger.info(`Starting new task for page ${task.pageId}. Active requests: ${this.activeRequests.size} / ${this.globalQueue.length}`);
 
+    const startTime = Date.now();
     try {
       await task.execute();
+      const executionTime = Date.now() - startTime;
+      logger.info(`Completed task for page ${task.pageId} in ${executionTime}ms`);
+      this.executionTimestamps.push(Date.now());
     } finally {
       this.activeRequests.delete(task.pageId);
       
-      // Continue processing queue
       setImmediate(() => this.processQueue());
     }
 
-    // Process additional requests in parallel if possible
     if (this.globalQueue.length > 0) {
       setImmediate(() => this.processQueue());
     }
+  }
+
+  getTasksPerSecond(periodInSeconds: number): number {
+    const now = Date.now();
+    const cutoffTime = now - (periodInSeconds * 1000);
+    
+    const recentExecutions = this.executionTimestamps.filter(
+      timestamp => timestamp > cutoffTime
+    ).length;
+    
+    return recentExecutions / periodInSeconds;
+  }
+
+  getActiveRequestsCount(): number {
+    return this.activeRequests.size;
   }
 } 

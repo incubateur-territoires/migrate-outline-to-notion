@@ -14,9 +14,9 @@ export class NotionClient {
   private client: Client;
   private rateLimiter: RateLimiter;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, rateLimiter: RateLimiter) {
     this.client = new Client({ auth: apiKey });
-    this.rateLimiter = new RateLimiter();
+    this.rateLimiter = rateLimiter;
     logger.debug('NotionClient initialized');
   }
 

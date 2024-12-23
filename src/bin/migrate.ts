@@ -5,11 +5,14 @@ import { MarkdownToNotionConverter } from '../markdownToNotion';
 import { NotionClient, PageMapping } from '../notionClient';
 import { processNotionContent, createNotionPage, createNotionFolder } from '../notionProcessor';
 import logger from '../utils/logger';
+import { RateLimiter } from '../utils/rateLimiter';
 
 const readdir = util.promisify(fs.readdir);
 const readFile = util.promisify(fs.readFile);
 
-const notionClient = new NotionClient(process.env.NOTION_API_KEY || '');
+const rateLimiter = new RateLimiter();
+
+const notionClient = new NotionClient(process.env.NOTION_API_KEY || '', rateLimiter);
 
 const pageMap = new Map<string, PageMapping>();
 
@@ -100,7 +103,7 @@ async function processDirectory(
             });
             processedSoFar.count++;
             const percentage = ((processedSoFar.count / totalFiles) * 100).toFixed(2);
-            logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles})`);
+            logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles}) - Notion API rate: ${rateLimiter.getTasksPerSecond(10)} tps over last 10s`);
           }
           processedPages++;
         } catch (error) {
@@ -144,7 +147,7 @@ async function processDirectory(
                 });
                 processedSoFar.count++;
                 const percentage = ((processedSoFar.count / totalFiles) * 100).toFixed(2);
-                logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles})`);
+                logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles}) - Notion API rate: ${rateLimiter.getTasksPerSecond(30)} tps over last 30s`);
               } catch (error) {
                 logger.error('Error reading file, continuing with next:', { 
                   error,
