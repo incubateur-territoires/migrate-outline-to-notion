@@ -1,4 +1,4 @@
-# migrate-outline-to-notion
+# Migrate Outline to Notion
 Migration tool to migrate from outline to notion
 
 ## How to perform the migration
@@ -35,3 +35,9 @@ cp .env.template .env
 # Run the migration
 npm run migrate
 ```
+
+### Set up env variables
+Create a .env file in this repository, and set following environment variables:
+- NOTION_API_KEY: `Internal Integration Secret` from your integration
+- NOTION_DESTINATION_PAGE_ID: the id of the page you want to import outline data in. It is the UUID part in the Notion page link, without "-" characters. For example, for `https://www.notion.so/test-page-1ad84dabc4ba976eb15be333148cc4c6`, id is going to be `1ad84dabc4ba976eb15be333148cc4c6`
+- OUTLINE_EXPORT_PATH: path of the folder on your machine in that you exported the Outline data from the archive.

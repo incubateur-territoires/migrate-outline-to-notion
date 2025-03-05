@@ -27,6 +27,8 @@
     "winston": "^3.17.0"
   },
   "devDependencies": {
-    "@types/mime-types": "^2.1.4"
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.13.9",
+    "ts-node": "^10.9.2"
   }
 }
