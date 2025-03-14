@@ -72,8 +72,7 @@ async function processDirectory(
         currentFolderPageId = parentPageId;
       }
 
-      for (const entry of entries) {
-
+      const processingPromises = entries.map(async entry => {
         const fullPath = path.join(directoryPath, entry.name);
         
         try {
@@ -88,7 +87,7 @@ async function processDirectory(
           } else if (entry.isFile() && path.extname(entry.name) === '.md') {
             if (foldersContentFiles.includes(fullPath)) {
               logger.debug('Skipping folder content file:', { fullPath });
-              continue;
+              return;
             }
 
             const title = decodeURIComponent(path.basename(fullPath, '.md'));
@@ -112,16 +111,16 @@ async function processDirectory(
             entry: entry.name,
             directoryPath
           });
-          continue;
         }
-      }
+      });
+
+      await Promise.all(processingPromises);
     }
     // Phase 2: Update pages with content
     else if (phase === 'update') {
       const currentFolderPageId = pageMap.get(directoryPath + '.md')?.notionId || parentPageId;
 
-      for (const entry of entries) {
-
+      const processingPromises = entries.map(async entry => {
         const fullPath = path.join(directoryPath, entry.name);
 
         try {
@@ -147,13 +146,12 @@ async function processDirectory(
                 });
                 processedSoFar.count++;
                 const percentage = ((processedSoFar.count / totalFiles) * 100).toFixed(2);
-                logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles}) - Notion API rate: ${rateLimiter.getTasksPerSecond(30)} tps over last 30s`);
+                logger.info(`Progress (${phase} phase): ${percentage}% (${processedSoFar.count}/${totalFiles}) - Notion API rate: ${rateLimiter.getTasksPerSecond(30)} rps over last 30s`);
               } catch (error) {
                 logger.error('Error reading file, continuing with next:', { 
                   error,
                   fullPath
                 });
-                continue;
               }
             }
           }
@@ -164,9 +162,10 @@ async function processDirectory(
             entry: entry.name,
             directoryPath
           });
-          continue;
         }
-      }
+      });
+
+      await Promise.all(processingPromises);
     }
   } catch (error) {
     logger.error('Error in processDirectory, continuing with parent process:', { 

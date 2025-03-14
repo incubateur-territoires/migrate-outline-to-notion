@@ -10,8 +10,8 @@ export class RateLimiter {
   private queues: Map<string, Task[]> = new Map();
   private globalQueue: Task[] = [];
   private processing = false;
-  private readonly maxGlobalConcurrent = 3;
-  private readonly rateWindowMs = 1000;
+  private readonly maxGlobalConcurrent = 10;
+  private readonly rateWindowMs = 10000;
   private executionTimestamps: number[] = [];
 
   async add<T>(pageId: string, task: () => Promise<T>): Promise<T> {
@@ -55,7 +55,6 @@ export class RateLimiter {
     );
 
     if (this.executionTimestamps.length >= this.maxGlobalConcurrent) {
-      logger.info(`Rate limit reached: ${this.executionTimestamps.length} requests in last ${this.rateWindowMs}ms. Waiting...`);
       setTimeout(() => this.processQueue(), 100);
       return;
     }
@@ -79,13 +78,13 @@ export class RateLimiter {
     }
 
     this.activeRequests.add(task.pageId);
-    logger.info(`Starting new task for page ${task.pageId}. Active requests: ${this.activeRequests.size} / ${this.globalQueue.length}`);
+    //logger.info(`Starting new task for page ${task.pageId}. Active requests: ${this.activeRequests.size} / ${this.globalQueue.length}`);
 
     const startTime = Date.now();
     try {
       await task.execute();
       const executionTime = Date.now() - startTime;
-      logger.info(`Completed task for page ${task.pageId} in ${executionTime}ms`);
+      //logger.info(`Completed task for page ${task.pageId} in ${executionTime}ms`);
       this.executionTimestamps.push(Date.now());
     } finally {
       this.activeRequests.delete(task.pageId);

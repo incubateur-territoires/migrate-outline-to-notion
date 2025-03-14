@@ -30,9 +30,9 @@ export class MarkdownToNotionConverter {
     this.s3Uploader = new S3Uploader();
   }
 
-  private async uploadImageToS3(imagePath: string): Promise<string | null> {
+  private async uploadImageToS3(imagePath: string, originalPath?: string): Promise<string | null> {
     try {
-      const s3Url = await this.s3Uploader.uploadFile(imagePath);
+      const s3Url = await this.s3Uploader.uploadFile(imagePath, originalPath);
       logger.debug(`Uploaded image to S3: ${s3Url}`);
       return s3Url;
     } catch (error: any) {
@@ -190,7 +190,7 @@ export class MarkdownToNotionConverter {
       if (decodedImagePath.startsWith('uploads/') || decodedImagePath.startsWith('public/')) {
         const fullImagePath = path.join(mdDir, decodedImagePath);
         try {
-          const s3Url = await this.uploadImageToS3(fullImagePath);
+          const s3Url = await this.uploadImageToS3(fullImagePath, decodedImagePath);
           if (s3Url) {
             // Preserve the title/alignment if it exists
             replacement = title 
@@ -339,7 +339,7 @@ export class MarkdownToNotionConverter {
         const decodedPath = decodeURIComponent(relativePath);
         const fullFilePath = path.join(mdDir, 'public', decodedPath);
 
-        const s3Url = await this.s3Uploader.uploadFile(fullFilePath);
+        const s3Url = await this.uploadImageToS3(fullFilePath, filePath);
         if (s3Url) {
           replacement = `[${fileName}](${s3Url})`;
         }
